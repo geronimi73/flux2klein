@@ -1,6 +1,7 @@
 import torch
 import huggingface_hub
 from safetensors.torch import load_file as load_sft
+from torchvision import transforms
 
 from .flux2_src.model import Flux2, Klein4BParams
 from .flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
@@ -64,4 +65,45 @@ def load_ae(mock=False):
   print(f"AutoEncoder loaded in {time_taken():.1f}s")
 
   return ae
+
+def ae_decode(ae, img_latent):
+  "Latent (Tensor) -> Image (PIL)"
+  _, _, h, w = img_latent.shape
+
+  device = next(ae.parameters()).device
+
+  with torch.no_grad():
+    img = ae.decode(img_latent.to(device)).detach()
+
+  img.squeeze_()
+
+  # first clamp, then normalize - artifacts if the other way around
+  img = img.clamp(-1, 1)
+  img = img * 0.5 + 0.5
+  # numpy doesnt like bfloat16
+  img = transforms.ToPILImage()(img.to(torch.float32))
+
+  return img
+
+def ae_encode(ae, img, patch_size=16):
+  "Image (PIL) -> Latent (Tensor)"
+
+  preprocess = transforms.Compose([
+    # height and width have to be divisible by 16 -> crop from center
+    transforms.CenterCrop(tuple(x//patch_size*patch_size for x in (img.height, img.width))),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    lambda x: x.to(device).unsqueeze(0)  # add batch dim
+  ])
+
+  # Get AE device and dtype from the first parameter
+  device = next(ae.parameters()).device
+  dtype = next(ae.parameters()).dtype
+
+  img = preprocess(img).to(device).to(dtype)
+
+  with torch.no_grad():
+    img_latent = ae.encode(img)
+
+  return img_latent
 

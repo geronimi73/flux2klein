@@ -10,6 +10,8 @@ from einops import rearrange
 from flux2klein import (
   load_transformer_flux2klein4base,
   load_ae,
+  ae_encode,
+  ae_decode,
   prc_txt, 
   prc_img, 
 )
@@ -166,8 +168,6 @@ def img2img(
     rearrange(img, "1 (h w) c -> 1 c h w", h=img_h//16)
   )
 
-
-
 def preprocess_sample(sample, resize_to=512, patch_size=16):
   "Load single image input and target from dataset"
   img_target, mask = sample["image"], sample["mask"]
@@ -204,47 +204,6 @@ def get_rnd_timestep(num_samples, dist="normal"):
 def add_noise(latent, noise, timestep):
   "Add given noise at given level (`timestep`) to latent"
   return (1 - timestep) * latent + timestep * noise # (1-noise_level) * latent + noise_level * noise   
-
-def ae_decode(ae, img_latent):
-  "Latent (Tensor) -> Image (PIL)"
-  _, _, h, w = img_latent.shape
-
-  device = next(ae.parameters()).device
-
-  with torch.no_grad():
-    img = ae.decode(img_latent.to(device)).detach()
-
-  img.squeeze_()
-
-  # first clamp, then normalize - artifacts if the other way around
-  img = img.clamp(-1, 1)
-  img = img * 0.5 + 0.5
-  # num,py doesnt like bfloat16
-  img = transforms.ToPILImage()(img.to(torch.float32))
-
-  return img
-
-def ae_encode(ae, img):
-  "Image (PIL) -> Latent (Tensor)"
-
-  preprocess = transforms.Compose([
-    # height and width have to be divisible by 16 -> crop from center
-    transforms.CenterCrop(tuple(x//16*16 for x in (img.height, img.width))),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    lambda x: x.to(device).unsqueeze(0)  # add batch dim
-  ])
-
-  # Get AE device and dtype from the first parameter
-  device = next(ae.parameters()).device
-  dtype = next(ae.parameters()).dtype
-
-  img = preprocess(img).to(device).to(dtype)
-
-  with torch.no_grad():
-    img_latent = ae.encode(img)
-
-  return img_latent
 
 def get_schedule(num_steps, rho=5):
   "Karras et al schedule for sigma_max = 1 and sigma_min = 0"
