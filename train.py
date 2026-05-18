@@ -66,7 +66,7 @@ def train(
     img_ref, img_ref_ids = prc_img(img_in.squeeze(), t_coord=torch.tensor([10], dtype=torch.int64))
 
     # For loss: flatten noise and clean target 
-    noise_flat, _ = prc_img(noise)
+    noise_flat = img
     img_target_flat, _ = prc_img(img_target)
 
     # Add batch dimension 
