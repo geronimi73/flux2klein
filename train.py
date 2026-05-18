@@ -1,42 +1,43 @@
 import torch
 import torch.nn.functional as F
-import huggingface_hub
 import bitsandbytes as bnb
-from safetensors.torch import load_file as load_sft
-from torch.utils.data import RandomSampler
 from tqdm import tqdm
 from datasets import load_dataset
 from torchvision import transforms
-from contextlib import contextmanager
-from time import perf_counter
 from itertools import cycle
-from PIL import Image
-from pathlib import Path
 from einops import rearrange
 
-from flux2_src.model import Flux2, Klein4BParams
-from flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
-from flux2_src.sampling import prc_txt, prc_img
+from flux2klein import (
+  load_transformer_flux2klein4base,
+  load_ae,
+  prc_txt, 
+  prc_img, 
+)
+from core.images import pil_cat
 
 def train(
-  device = "cuda",
+  device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
   dataset = "g-ronimo/masked_background_v6",
   lr = 1e-4,
   steps = 4001,
   seed = 42,
+  mock = True
 ):
   """
     Trains flux2klein 4b base as an object remove. 
     No guidance yet
     WIP! 
   """
-  prompt_tok = torch.load("data/prompt_remove.pt")
-  transformer = load_transformer_flux2klein4base().to(dtype).to(device)
-  ae = load_ae().to(dtype).to(device)
+  prompt_tok = torch.load("cache/prompt_remove.pt", map_location="cpu").to(device)
+  transformer = load_transformer_flux2klein4base(mock=mock).to(dtype).to(device)
+  ae = load_ae(mock=mock).to(dtype).to(device)
   ds = load_dataset(dataset)["train"]
   data_sampler = cycle(torch.utils.data.RandomSampler(ds, generator=torch.manual_seed(seed)))
-  optimizer = bnb.optim.AdamW8bit(transformer.parameters(), lr=lr)
+  optimizer = (
+    bnb.optim.AdamW8bit(transformer.parameters(), lr=lr) if device == "cuda" else
+    torch.optim.AdamW(transformer.parameters(), lr=lr) 
+  )
   img_eval, _ = preprocess_sample(load_dataset(dataset)["eval"][0])
 
   for step in range(steps):
@@ -116,7 +117,7 @@ def img2img(
   num_steps = 50,
   seed = 42,
   guidance = 4,
-  device = "cuda",
+  device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
   output_fn = "output.jpg"
   ):
@@ -165,59 +166,7 @@ def img2img(
     rearrange(img, "1 (h w) c -> 1 c h w", h=img_h//16)
   )
 
-def load_transformer_mock():
-  "Load rnd. weight tiny FLUX2"
-  with catchtime() as time_taken:
-    transformer = Flux2(
-      Klein4BParams(
-        depth=1, 
-        depth_single_blocks=1,
-        # hidden_size=3048
-      )
-    )
-  print(f"Transformer loaded in {time_taken():.1f}s")
 
-  return transformer 
-
-def load_transformer_flux2klein4base():
-  "Load rnd. weight tiny FLUX2"
-  model_params = Klein4BParams()
-  with catchtime() as time_taken:
-    with torch.device("meta"):
-      transformer = Flux2(model_params)
-
-    weight_path = huggingface_hub.hf_hub_download(
-      # repo_id="black-forest-labs/FLUX.2-klein-4B",
-      repo_id="black-forest-labs/FLUX.2-klein-base-4B",
-      filename='flux-2-klein-base-4b.safetensors',
-      # filename='flux-2-klein-4b.safetensors',
-      repo_type="model",
-    )
-    sd = load_sft(weight_path)
-    transformer.load_state_dict(sd, strict=True, assign=True)
-  print(f"Flow model loaded in {time_taken():.1f}s")
-
-  return transformer 
-
-
-
-def load_ae():
-  "Load FLUX2 AE"
-  with catchtime() as time_taken:
-    ae = AutoEncoder(AutoEncoderParams())
-
-    weight_path = huggingface_hub.hf_hub_download(
-      repo_id="black-forest-labs/FLUX.2-dev",
-      filename="ae.safetensors",
-      repo_type="model",
-    )
-
-    sd = load_sft(weight_path, device="cpu")
-    ae.load_state_dict(sd, strict=True, assign=True)
-    ae = ae.eval()
-  print(f"AutoEncoder loaded in {time_taken():.1f}s")
-
-  return ae
 
 def preprocess_sample(sample, resize_to=512, patch_size=16):
   "Load single image input and target from dataset"
@@ -242,8 +191,10 @@ def get_rnd_timestep(num_samples, dist="normal"):
   elif dist == "uniform":
     sigmas = torch.rand((num_samples,))
   elif dist in ["beta", "beta-high"]:
-    if dist == "beta": alpha, beta = 1, 2.5
-    else: alpha, beta = 2.5, 1        
+    if dist == "beta": 
+      alpha, beta = 1, 2.5
+    else: 
+      alpha, beta = 2.5, 1        
     beta_dist = torch.distributions.beta.Beta(torch.tensor(alpha), torch.tensor(beta))
     sigmas = beta_dist.sample([num_samples])
   else:
@@ -295,28 +246,9 @@ def ae_encode(ae, img):
 
   return img_latent
 
-def pil_cat(img1, img2, hor = True):
-  "Concat two PIL Images"
-  if hor is None:
-    hor = True if max([i.width/i.height for i in (img1, img2)]) < 1 else False
-  img = (
-    Image.new("RGB", (img1.width+img2.width, max(img1.height, img2.height))) if hor else
-    Image.new("RGB", (max(img1.width, img2.width), img1.height+img2.height))
-  )
-  img.paste(img1, (0, 0))
-  img.paste(img2, (img1.width, 0) if hor else (0, img1.height))
-  return img
-
 def get_schedule(num_steps, rho=5):
   "Karras et al schedule for sigma_max = 1 and sigma_min = 0"
   return torch.linspace(1, 0, num_steps + 1) ** (1/rho)
-
-@contextmanager
-def catchtime():
-  t1 = t2 = perf_counter() 
-  yield lambda: t2 - t1
-  t2 = perf_counter() 
-
 
 if __name__ == "__main__":
   train()
