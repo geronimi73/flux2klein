@@ -63,7 +63,8 @@ def plot_schedule(timesteps, title="Timestep schedule"):
 
 def load_flow_model():
   global flow_model
-  if flow_model is not None: return
+  if flow_model is not None: 
+    return
   model_params = Klein4BParams()
   with catchtime() as time_taken:
     with torch.device("meta"):
@@ -80,7 +81,8 @@ def load_flow_model():
 
 def load_ae():
   global ae
-  if ae is not None: return
+  if ae is not None: 
+    return
   with catchtime() as time_taken:
     ae = AutoEncoder(AutoEncoderParams())
 
@@ -143,7 +145,7 @@ def encode_prompt(prompt):
   global text_encoder
   if text_encoder is None:
     with catchtime() as time_taken:
-      text_encoder = Qwen3Embedder(model_spec=f"Qwen/Qwen3-4B", device="cpu").to(dtype)
+      text_encoder = Qwen3Embedder(model_spec="Qwen/Qwen3-4B", device="cpu").to(dtype)
     print(f"Text encoder loaded in {time_taken():.1f}s")
   text_encoder.to(device)
   emb = text_encoder([prompt]).squeeze()
