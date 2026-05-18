@@ -212,6 +212,6 @@ def get_schedule(num_steps, rho=5):
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser()
-  parser.add_argument("--mock", action="store_true")
+  parser.add_argument("--dummy", action="store_true")
   args = parser.parse_args()
-  train(mock=args.mock)
+  train(mock=args.dummy)
