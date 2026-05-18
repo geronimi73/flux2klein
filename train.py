@@ -210,4 +210,8 @@ def get_schedule(num_steps, rho=5):
   return torch.linspace(1, 0, num_steps + 1) ** (1/rho)
 
 if __name__ == "__main__":
-  train()
+  import argparse
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--mock", action="store_true")
+  args = parser.parse_args()
+  train(mock=args.mock)
