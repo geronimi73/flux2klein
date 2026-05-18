@@ -25,7 +25,7 @@ def train(
   mock = True
 ):
   """
-    Trains flux2klein 4b base as an object remove. 
+    Trains flux2klein 4b base as an object remover. 
     No guidance yet
     WIP! 
   """
