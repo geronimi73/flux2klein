@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 import bitsandbytes as bnb
@@ -6,6 +7,8 @@ from datasets import load_dataset
 from torchvision import transforms
 from itertools import cycle
 from einops import rearrange
+from datetime import date
+from random_slugs import generate_slug
 
 from flux2klein import (
   load_transformer_flux2klein4base,
@@ -31,6 +34,12 @@ def train(
     No guidance yet
     WIP! 
   """
+  run_name = f"{date.today().isoformat()}-{generate_slug(num_of_words=2)}"
+  run_dir = f"run/{run_name}"
+  eval_dir = f"{run_dir}/eval"
+  os.makedirs(eval_dir, exist_ok=True)
+  print(f"Run: {run_name}")
+
   prompt_tok = torch.load("cache/prompt_remove.pt", map_location="cpu").to(device)
   transformer = load_transformer_flux2klein4base(mock=mock).to(dtype).to(device)
   ae = load_ae(mock=mock).to(dtype).to(device)
@@ -48,7 +57,7 @@ def train(
     # Sample input (=with masked area) and target image
     img_in, img_target = preprocess_sample(ds[next(data_sampler)])
     if step == 0:
-      log_first_sample(img_in, img_target)
+      log_first_sample(img_in, img_target, run_dir)
     img_in_size = img_in.size
     img_in = ae_encode(ae, img_in).squeeze()
     img_target = ae_encode(ae, img_target).squeeze()
@@ -96,15 +105,16 @@ def train(
 
     if step % 50 == 0:
       eval_step(step, transformer, ae, prompt_tok, img_eval)
+      eval_step(step, transformer, ae, prompt_tok, img_eval, eval_dir)
 
-def log_first_sample(img_in, img_target):
+def log_first_sample(img_in, img_target, run_dir):
   print("First sample image saved. Size: ", img_in.size, f"(mode {img_in.mode})")
-  pil_cat(img_in, img_target).save("sample_zero.jpg")
+  pil_cat(img_in, img_target).save(f"{run_dir}/sample_zero.jpg")
 
-def eval_step(step, transformer, ae, prompt_tok, image):
+def eval_step(step, transformer, ae, prompt_tok, image, eval_dir):
   transformer.eval()
 
-  image_out_fn = f"eval-{step}_output.jpg"
+  image_out_fn = f"{eval_dir}/eval-{step}_output.jpg"
   image_out = img2img(transformer, ae, prompt_tok, image)
   pil_cat(image, image_out).save(image_out_fn)
   print(f"Eval at step {step}. Output written to {image_out_fn}")
