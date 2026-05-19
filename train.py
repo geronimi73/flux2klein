@@ -24,8 +24,8 @@ def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
   dataset = "g-ronimo/masked_background_v6",
-  lr = 1e-4,
   steps = 4001,
+  lr = 1e-5,
   seed = 42,
   mock = True
 ):
