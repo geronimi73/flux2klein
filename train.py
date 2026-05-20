@@ -7,6 +7,7 @@ from datasets import load_dataset
 from torchvision import transforms
 from itertools import cycle
 from einops import rearrange
+from PIL import Image
 from datetime import date
 from random_slugs import generate_slug
 
@@ -18,7 +19,7 @@ from flux2klein import (
   prc_txt, 
   prc_img, 
 )
-from core.images import pil_cat
+from core.images import pil_cat, match_width_keep_aspect
 
 def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
@@ -43,19 +44,23 @@ def train(
   prompt_tok = torch.load("cache/prompt_remove.pt", map_location="cpu").to(device)
   transformer = load_transformer_flux2klein4base(mock=mock).to(dtype).to(device)
   ae = load_ae(mock=mock).to(dtype).to(device)
-  ds = load_dataset(dataset)["train"]
-  data_sampler = cycle(torch.utils.data.RandomSampler(ds, generator=torch.manual_seed(seed)))
+  ds = load_dataset(dataset)
+  data_sampler = cycle(torch.utils.data.RandomSampler(ds["train"], generator=torch.manual_seed(seed)))
+  eval_images = [
+    img_input
+    for sample in ds["eval"]
+    for img_input, img_target in [preprocess_sample(sample)]
+  ]
   optimizer = (
     bnb.optim.AdamW8bit(transformer.parameters(), lr=lr) if device == "cuda" else
     torch.optim.AdamW(transformer.parameters(), lr=lr) 
   )
-  img_eval, _ = preprocess_sample(load_dataset(dataset)["eval"][0])
 
   for step in range(steps):
     transformer.train()
 
     # Sample input (=with masked area) and target image
-    img_in, img_target = preprocess_sample(ds[next(data_sampler)])
+    img_in, img_target = preprocess_sample(ds["train"][next(data_sampler)])
     if step == 0:
       log_first_sample(img_in, img_target, run_dir)
     img_in_size = img_in.size
@@ -104,20 +109,29 @@ def train(
     print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f}")
 
     if step % 50 == 0:
-      eval_step(step, transformer, ae, prompt_tok, img_eval)
-      eval_step(step, transformer, ae, prompt_tok, img_eval, eval_dir)
+      eval_step(step, transformer, ae, prompt_tok, eval_images, eval_dir)
 
 def log_first_sample(img_in, img_target, run_dir):
   print("First sample image saved. Size: ", img_in.size, f"(mode {img_in.mode})")
   pil_cat(img_in, img_target).save(f"{run_dir}/sample_zero.jpg")
 
-def eval_step(step, transformer, ae, prompt_tok, image, eval_dir):
+def eval_step(step, transformer, ae, prompt_tok, images, eval_dir):
   transformer.eval()
 
-  image_out_fn = f"{eval_dir}/eval-{step}_output.jpg"
-  image_out = img2img(transformer, ae, prompt_tok, image)
-  pil_cat(image, image_out).save(image_out_fn)
-  print(f"Eval at step {step}. Output written to {image_out_fn}")
+  gallery = None
+  gallery_fn = f"{eval_dir}/eval-{step}_gallery.jpg"
+
+  for i, image in enumerate(images):
+    image_out_fn = f"{eval_dir}/eval-{step}_output-{i}.jpg"
+    image_out = img2img(transformer, ae, prompt_tok, image, num_steps=5)
+    image_out = pil_cat(image, image_out)
+    image_out.save(image_out_fn)
+    if gallery is None:
+      gallery = image_out
+    else:
+      gallery = pil_cat(gallery, match_width_keep_aspect(image_out, gallery), hor=False)
+    print(f"Eval at step {step}. Output written to {image_out_fn}")
+  gallery.save(gallery_fn)
 
   torch.cuda.empty_cache()
 
