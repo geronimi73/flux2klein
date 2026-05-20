@@ -24,9 +24,9 @@ from core.images import pil_cat, match_width_keep_aspect
 def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
-  dataset = "g-ronimo/masked_background_v6",
-  steps = 4001,
+  dataset = "g-ronimo/masked_background_v7",
   lr = 1e-5,
+  steps = 2001,
   seed = 42,
   mock = True
 ):
