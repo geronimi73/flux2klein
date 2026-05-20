@@ -6,3 +6,4 @@ __pycache__
 /ds_eval
 .*
 /run
+screenlog*
