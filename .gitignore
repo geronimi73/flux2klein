@@ -3,3 +3,6 @@
 /cache
 __pycache__
 /notes
+/ds_eval
+.*
+/run
