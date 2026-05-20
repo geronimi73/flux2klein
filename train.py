@@ -123,7 +123,7 @@ def eval_step(step, transformer, ae, prompt_tok, images, eval_dir):
 
   for i, image in enumerate(images):
     image_out_fn = f"{eval_dir}/eval-{step}_output-{i}.jpg"
-    image_out = img2img(transformer, ae, prompt_tok, image, num_steps=5)
+    image_out = img2img(transformer, ae, prompt_tok, image, num_steps=50)
     image_out = pil_cat(image, image_out)
     image_out.save(image_out_fn)
     if gallery is None:
