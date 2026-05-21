@@ -152,7 +152,8 @@ def img2img(
     torch.manual_seed(seed)
 
   img_w, img_h = img_ref.size
-  noise = torch.randn([128, img_h//16, img_w//16], dtype=dtype, device=device)
+  noise = torch.randn([128, img_h//16, img_w//16], dtype=dtype, device=device, generator=torch.manual_seed(seed))
+
   img_ref = ae_encode(ae, img_ref).squeeze()
   
   # Add IDs to prompt, noise, input image
