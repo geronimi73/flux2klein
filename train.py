@@ -72,15 +72,15 @@ def train(
 
     # Add noise to input img
     noise = torch.randn([128, img_in_size[1]//16, img_in_size[0]//16], dtype=dtype, device=device)
-    img_in = add_noise(img_in, noise, timestep)
+    img_target_noisy = add_noise(img_target, noise, timestep)
 
     # Add IDs to prompt, noise, input image
     txt, txt_ids = prc_txt(prompt_tok)
-    img, img_ids = prc_img(noise)
+    img, img_ids = prc_img(img_target_noisy)
     img_ref, img_ref_ids = prc_img(img_in.squeeze(), t_coord=torch.tensor([10], dtype=torch.int64))
 
     # For loss: flatten noise and clean target 
-    noise_flat = img
+    noise_flat, _ = prc_img(noise)
     img_target_flat, _ = prc_img(img_target)
 
     # Add batch dimension 
