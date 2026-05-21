@@ -106,7 +106,7 @@ def train(
     optimizer.zero_grad()
 
     loss = loss.detach().cpu().item()
-    print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f}")
+    print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f} (noise level: {timestep.item():.2f})")
 
     if step % 50 == 0:
       eval_step(step, transformer, ae, prompt_tok, eval_images, eval_dir)
