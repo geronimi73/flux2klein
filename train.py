@@ -68,7 +68,7 @@ def train(
     img_target = ae_encode(ae, img_target).squeeze()
 
     # Choose noise level
-    timestep = get_rnd_timestep(1).to(device).to(dtype)
+    timestep = get_rnd_timestep(1, dist="uniform").to(device).to(dtype)
 
     # Add noise to input img
     noise = torch.randn([128, img_in_size[1]//16, img_in_size[0]//16], dtype=dtype, device=device)
