@@ -10,6 +10,7 @@ from einops import rearrange
 from PIL import Image
 from datetime import date
 from random_slugs import generate_slug
+from pathlib import Path
 
 from flux2klein import (
   load_transformer_flux2klein4base,
@@ -37,9 +38,9 @@ def train(
     WIP! 
   """
   run_name = f"{date.today().isoformat()}-{generate_slug(num_of_words=2)}"
-  run_dir = f"run/{run_name}"
+  run_dir = Path(f"run/{run_name}")
+  run_dir.mkdir()
   eval_dir = f"{run_dir}/eval"
-  os.makedirs(eval_dir, exist_ok=True)
   print(f"Run: {run_name}")
 
   prompt_tok = torch.load("cache/prompt_remove.pt", map_location="cpu").to(device)
@@ -107,20 +108,24 @@ def log_first_sample(img_in, img_target, run_dir):
 def eval_step(step, transformer, ae, prompt_tok, images, eval_dir):
   transformer.eval()
 
-  gallery = None
-  gallery_fn = f"{eval_dir}/eval-{step}_gallery.jpg"
+  eval_dir = Path(eval_dir)
+  eval_dir.mkdir()
+  images_dir = eval_dir / "images"
+  images_dir.mkdir()
 
+  gallery = None
   for i, image in enumerate(images):
-    image_out_fn = f"{eval_dir}/eval-{step}_output-{i}.jpg"
     image_out = img2img(transformer, ae, prompt_tok, image, num_steps=50)
     image_out = pil_cat(image, image_out)
-    image_out.save(image_out_fn)
+    image_out.save(images_dir / f"eval-{step}_output-{i}.jpg")
     if gallery is None:
       gallery = image_out
     else:
       gallery = pil_cat(gallery, match_width_keep_aspect(image_out, gallery), hor=False)
-    print(f"Eval at step {step}. Output written to {image_out_fn}")
+
+  gallery_fn = eval_dir / f"eval-{step}_gallery.jpg"
   gallery.save(gallery_fn)
+  print(f"Eval at step {step}. Eval gallery written to {gallery_fn.name}")
 
   torch.cuda.empty_cache()
 
@@ -136,7 +141,6 @@ def img2img(
   dtype = torch.bfloat16,
   output_fn = "output.jpg"
   ):
-  # 99% same as text2img(), changes as comments
   if seed is not None:
     torch.manual_seed(seed)
 
