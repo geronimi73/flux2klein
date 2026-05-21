@@ -39,6 +39,9 @@ def train(
     No guidance yet
     WIP! 
   """
+  if seed is not None:
+    torch.manual_seed(seed)
+
   run_name = f"{date.today().isoformat()}-{generate_slug(num_of_words=2)}"
   run_dir = Path(f"run/{run_name}")
   run_dir.mkdir()
