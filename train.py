@@ -18,6 +18,7 @@ from flux2klein import (
   ae_decode,
   prc_txt, 
   prc_img, 
+  Flux2KleinInputs
 )
 from core.images import pil_cat, match_width_keep_aspect
 
@@ -63,43 +64,31 @@ def train(
     img_in, img_target = preprocess_sample(ds["train"][next(data_sampler)])
     if step == 0:
       log_first_sample(img_in, img_target, run_dir)
-    img_in_size = img_in.size
     img_in = ae_encode(ae, img_in).squeeze()
     img_target = ae_encode(ae, img_target).squeeze()
+
+    # Gaussian noise
+    noise = torch.randn_like(img_in, dtype=dtype, device=device)
 
     # Choose noise level
     timestep = get_rnd_timestep(1, dist="uniform").to(device).to(dtype)
 
-    # Add noise to input img
-    noise = torch.randn([128, img_in_size[1]//16, img_in_size[0]//16], dtype=dtype, device=device)
-    img_target_noisy = add_noise(img_target, noise, timestep)
-
-    # Add IDs to prompt, noise, input image
-    txt, txt_ids = prc_txt(prompt_tok)
-    img, img_ids = prc_img(img_target_noisy)
-    img_ref, img_ref_ids = prc_img(img_in.squeeze(), t_coord=torch.tensor([10], dtype=torch.int64))
-
-    # For loss: flatten noise and clean target 
-    noise_flat, _ = prc_img(noise)
-    img_target_flat, _ = prc_img(img_target)
-
-    # Add batch dimension 
-    txt, txt_ids = txt[None,], txt_ids[None,]
-    img, img_ids = img[None,], img_ids[None,]
-    img_ref, img_ref_ids = img_ref[None,], img_ref_ids[None,]
-    noise_flat, img_target_flat = noise_flat[None,], img_target_flat[None,]
+    transformer_inputs = Flux2KleinInputs(
+      noise = noise,
+      prompt = prompt_tok,
+      timestep = timestep,
+      images = [ img_in ],
+      img_clean = img_target
+    )
 
     pred = transformer.forward(
-      x =     torch.cat([img, img_ref], dim=1), 
-      x_ids = torch.cat([img_ids, img_ref_ids], dim=1),
-      ctx = txt, 
-      ctx_ids = txt_ids,
+      **transformer_inputs.as_dict(),
       timesteps = timestep,
       guidance = None
     )
     pred, _ = pred.split(pred.shape[1] // 2, dim=1) 
 
-    loss = F.mse_loss(pred, noise_flat - img_target_flat)
+    loss = F.mse_loss(pred, transformer_inputs.get_noise() - transformer_inputs.get_target())
     loss.backward()
     grad_norm = torch.nn.utils.clip_grad_norm_(transformer.parameters(), 1.0)
     optimizer.step()
@@ -152,40 +141,36 @@ def img2img(
     torch.manual_seed(seed)
 
   img_w, img_h = img_ref.size
-  noise = torch.randn([128, img_h//16, img_w//16], dtype=dtype, device=device, generator=torch.manual_seed(seed))
-
+  noise = torch.randn([128, img_h//16, img_w//16], dtype=dtype, device=device,
+   # generator=torch.manual_seed(seed)
+  )
   img_ref = ae_encode(ae, img_ref).squeeze()
-  
-  # Add IDs to prompt, noise, input image
-  txt, txt_ids = prc_txt(prompt_tok)
-  img, img_ids = prc_img(noise)
-  img_ref, img_ref_ids = prc_img(img_ref.squeeze(), t_coord=torch.tensor([10], dtype=torch.int64))
 
-  # Add batch dimension 
-  txt, txt_ids = txt[None,], txt_ids[None,]
-  img, img_ids = img[None,], img_ids[None,]
-  img_ref, img_ref_ids = img_ref[None,], img_ref_ids[None,]
+  transformer_inputs = Flux2KleinInputs(
+    noise = noise,
+    prompt = prompt_tok,
+    images = [ img_ref ],
+  )
 
   timesteps = get_schedule(num_steps)
-  # guidance_vec = torch.full((img.shape[0],), 1.0, device=device, dtype=dtype)
 
   for step, (t_curr, t_next) in enumerate(
     tqdm(zip(timesteps, timesteps[1:]), desc="Denoising", total=num_steps)
     ):
-    timesteps_vec = torch.full((img.shape[0],), t_curr, device=device, dtype=dtype)    
+    timesteps_vec = torch.full((1,), t_curr, device=device, dtype=dtype)    
 
     with torch.no_grad():
       pred = transformer.forward(
-        # x: Concatenated img(=noise)+ref imgs; "id" coords encoded with different `t` dim for each img. that's the most important point
-        x =     torch.cat([img, img_ref], dim=1), 
-        x_ids = torch.cat([img_ids, img_ref_ids], dim=1),
-        ctx = txt, ctx_ids = txt_ids,
+        **transformer_inputs.as_dict(),
         timesteps = timesteps_vec,
         guidance = None
       )
       # model returns [img + img_refs] -> strip img_refs
-      pred = pred[:, :img.size(1)]
+      pred, _ = pred.split(pred.shape[1] // 2, dim=1) 
+
+    img = transformer_inputs.get_img_noisy()
     img = img + (t_next - t_curr) * pred
+    transformer_inputs.update_img_noisy(img)
 
   # unflatten tensor; linear -> 2d  
   return ae_decode(
@@ -225,10 +210,6 @@ def get_rnd_timestep(num_samples, dist="normal"):
   else:
       raise Exception(f"unknown distribution {dist}")
   return sigmas
-
-def add_noise(latent, noise, timestep):
-  "Add given noise at given level (`timestep`) to latent"
-  return (1 - timestep) * latent + timestep * noise # (1-noise_level) * latent + noise_level * noise   
 
 def get_schedule(num_steps, rho=5):
   "Karras et al schedule for sigma_max = 1 and sigma_min = 0"
