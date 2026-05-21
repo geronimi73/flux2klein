@@ -30,7 +30,9 @@ def train(
   lr = 1e-5,
   steps = 2001,
   seed = 42,
-  mock = True
+  steps_log = 1,
+  steps_eval = 50,
+  mock = True,
 ):
   """
     Trains flux2klein 4b base as an object remover. 
@@ -96,9 +98,11 @@ def train(
     optimizer.zero_grad()
 
     loss = loss.detach().cpu().item()
-    print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f} (noise level: {timestep.item():.2f})")
 
-    if step % 50 == 0:
+    if step % steps_log == 0:
+      print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f} (noise level: {timestep.item():.2f})")
+
+    if step % steps_eval == 0:
       eval_step(step, transformer, ae, prompt_tok, eval_images, eval_dir)
 
 def log_first_sample(img_in, img_target, run_dir):
