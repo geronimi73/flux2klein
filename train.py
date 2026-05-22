@@ -200,7 +200,6 @@ def img2img(
         pred_cond, pred_uncond = pred.chunk(2)
         pred = pred_uncond + guidance * (pred_cond - pred_uncond)
 
-    img = transformer_inputs.get_img_noisy()
     img = img + (t_next - t_curr) * pred
     transformer_inputs.update_img_noisy(img)
 
