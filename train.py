@@ -118,9 +118,9 @@ def eval_step(step, transformer, ae, prompt_tok, prompt_empty_tok, images, eval_
   transformer.eval()
 
   eval_dir = Path(eval_dir)
-  eval_dir.mkdir()
+  eval_dir.mkdir(exist_ok=True)
   images_dir = eval_dir / "images"
-  images_dir.mkdir()
+  images_dir.mkdir(exist_ok=True)
 
   gallery = None
   for i, image in enumerate(images):
