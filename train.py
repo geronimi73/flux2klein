@@ -21,7 +21,7 @@ from flux2klein import (
   prc_img, 
   Flux2KleinInputs
 )
-from core.images import pil_cat, match_width_keep_aspect
+from core.images import pil_cat, pil_add_text, match_width_keep_aspect
 
 def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
@@ -49,6 +49,8 @@ def train(
   print(f"Run: {run_name}")
 
   prompt_tok = torch.load("cache/prompt_remove.pt", map_location="cpu").to(device)
+  prompt_empty_tok = torch.load("cache/prompt_empty.pt", map_location="cpu").to(device)
+
   transformer = load_transformer_flux2klein4base(mock=mock).to(dtype).to(device)
   ae = load_ae(mock=mock).to(dtype).to(device)
   ds = load_dataset(dataset)
@@ -106,13 +108,13 @@ def train(
       print(f"Step {step} loss: {loss:.2f}, grad_norm: {grad_norm:.2f} (noise level: {timestep.item():.2f})")
 
     if step % steps_eval == 0:
-      eval_step(step, transformer, ae, prompt_tok, eval_images, eval_dir)
+      eval_step(step, transformer, ae, prompt_tok, prompt_empty_tok, eval_images, eval_dir)
 
 def log_first_sample(img_in, img_target, run_dir):
   print("First sample image saved. Size: ", img_in.size, f"(mode {img_in.mode})")
   pil_cat(img_in, img_target).save(f"{run_dir}/sample_zero.jpg")
 
-def eval_step(step, transformer, ae, prompt_tok, images, eval_dir):
+def eval_step(step, transformer, ae, prompt_tok, prompt_empty_tok, images, eval_dir):
   transformer.eval()
 
   eval_dir = Path(eval_dir)
@@ -122,8 +124,19 @@ def eval_step(step, transformer, ae, prompt_tok, images, eval_dir):
 
   gallery = None
   for i, image in enumerate(images):
-    image_out = img2img(transformer, ae, prompt_tok, image, num_steps=50)
-    image_out = pil_cat(image, image_out)
+    image_gen_cfg0 = pil_add_text(
+      pil_cat(
+        image, img2img(transformer, ae, prompt_tok, image, guidance = None, num_steps=50)
+      ), 
+      "CFG None"
+    )
+    image_gen_cfg4 = pil_add_text(
+      pil_cat(
+        image, img2img(transformer, ae, prompt_tok, image, guidance = 4, prompt_neg_tok = prompt_empty_tok, num_steps=50)
+      ), 
+      "CFG 4"
+    )
+    image_out = pil_cat(image_gen_cfg0, image_gen_cfg4, hor=False)
     image_out.save(images_dir / f"eval-{step}_output-{i}.jpg")
     if gallery is None:
       gallery = image_out
@@ -141,15 +154,17 @@ def img2img(
   ae,
   prompt_tok,
   img_ref,
+  prompt_neg_tok = None,
   num_steps = 50,
   seed = 42,
-  guidance = 4,
+  guidance = None,
   device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
   output_fn = "output.jpg"
   ):
   if seed is not None:
     torch.manual_seed(seed)
+  assert (guidance is None and prompt_neg_tok is None) or (guidance is not None and prompt_neg_tok is not None)
 
   img_w, img_h = img_ref.size
   noise = torch.randn([128, img_h//16, img_w//16], dtype=dtype, device=device,
@@ -160,6 +175,7 @@ def img2img(
   transformer_inputs = Flux2KleinInputs(
     noise = noise,
     prompt = prompt_tok,
+    prompt_neg = prompt_neg_tok,
     images = [ img_ref ],
   )
 
@@ -177,13 +193,18 @@ def img2img(
         guidance = None
       )
       # model returns [img + img_refs] -> strip img_refs
-      pred, _ = pred.split(pred.shape[1] // 2, dim=1) 
+      img = transformer_inputs.get_img_noisy()
+      pred = pred[:, :img.shape[1]]
+
+      if guidance:
+        pred_cond, pred_uncond = pred.chunk(2)
+        pred = pred_uncond + guidance * (pred_cond - pred_uncond)
 
     img = transformer_inputs.get_img_noisy()
     img = img + (t_next - t_curr) * pred
     transformer_inputs.update_img_noisy(img)
 
-  # unflatten tensor; linear -> 2d  
+  # unflatten tensor; flat -> 2d  
   return ae_decode(
     ae,
     rearrange(img, "1 (h w) c -> 1 c h w", h=img_h//16)

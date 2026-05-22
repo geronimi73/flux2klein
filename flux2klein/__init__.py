@@ -109,16 +109,14 @@ def ae_encode(ae, img, patch_size=16):
 
 class Flux2KleinInputs:
   def __init__(self, 
-    noise,
-    prompt,
-    timestep = None,
-    images = None,
-    img_clean = None    # for training
+    noise,      # [H W C]
+    prompt,             
+    prompt_neg = None,  #  for CFG: prepare BS 2, otherwise BS 1
+    timestep = None, 
+    images = None,   # list of [H W C]
+    img_clean = None # for training. if None -> inference
   ):
-    # need: x, x_ids, ctx, ctx_ids
-    # x = images = noise + ref images
-    # ctx = prompt tokens
-
+    # prepare everything for a single batch
     assert len(noise.shape) == 3
 
     if img_clean is not None:
@@ -131,9 +129,11 @@ class Flux2KleinInputs:
       assert timestep is None
       img_noisy = noise
 
-    # Build x and x_ids; img=noisy latent, img_refs=reference images
+    # FIRST: Build x and x_ids; img=noisy latent, img_refs=reference images
     img, img_ids = prc_img(img_noisy)
-    img, img_ids = img[None,], img_ids[None,] # add batch dim.
+
+    img = img[None, ]
+    img_ids = img_ids[None, ]
 
     if images:
       img_refs, img_refs_ids = zip(*[
@@ -145,7 +145,20 @@ class Flux2KleinInputs:
 
     self.x =     torch.cat([img, img_refs], dim=1) if images else img
     self.x_ids = torch.cat([img_ids, img_refs_ids], dim=1) if images else img_ids
-    self.ctx, self.ctx_ids = [t[None, ] for t in prc_txt(prompt)]
+
+    # SECOND: Build ctx = text
+    self.ctx, self.ctx_ids = prc_txt(prompt)
+    self.ctx, self.ctx_ids = self.ctx[None,], self.ctx_ids[None,]
+
+    # CFG: Add second batch dim.
+    self.is_cfg = prompt_neg is not None
+    if self.is_cfg:
+      ctx_neg, ctx_neg_ids = prc_txt(prompt_neg)
+      ctx_neg, ctx_neg_ids = ctx_neg[None,], ctx_neg_ids[None,]
+      self.ctx =      torch.cat([self.ctx, ctx_neg])
+      self.ctx_ids =  torch.cat([self.ctx_ids, ctx_neg_ids])
+      self.x =        torch.cat([self.x] * 2)
+      self.x_ids =    torch.cat([self.x_ids] * 2)
 
     # flat, with B dim.
     self.img_noisy = img
@@ -169,7 +182,10 @@ class Flux2KleinInputs:
   def get_img_noisy(self):
     return self.img_noisy
 
-  def update_img_noisy(self, img_noisy):
-    # B T C
-    self.img_noisy = img_noisy
-    self.x[:, :img_noisy.shape[1], :] = img_noisy
+  def update_img_noisy(self, img_noisy):      
+    self.img_noisy = img_noisy  # [B T C]
+    # Update flat img in `x`, add it twice if CFG
+    self.x[:, :img_noisy.shape[1], :] = (
+      torch.cat([img_noisy] * 2) if self.is_cfg else 
+      img_noisy
+    )
