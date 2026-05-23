@@ -28,10 +28,10 @@ def train(
   dtype = torch.bfloat16,
   dataset = "g-ronimo/masked_background_v7",
   lr = 1e-5,
-  steps = 2001,
+  steps = 3001,
   seed = 42,
   steps_log = 1,
-  steps_eval = 50,
+  steps_eval = 100,
   mock = True,
 ):
   """
@@ -60,6 +60,7 @@ def train(
     for sample in ds["eval"]
     for img_input, img_target in [preprocess_sample(sample)]
   ]
+
   optimizer = (
     bnb.optim.AdamW8bit(transformer.parameters(), lr=lr) if device == "cuda" else
     torch.optim.AdamW(transformer.parameters(), lr=lr) 
@@ -125,18 +126,15 @@ def eval_step(step, transformer, ae, prompt_tok, prompt_empty_tok, images, eval_
   gallery = None
   for i, image in enumerate(images):
     image_gen_cfg0 = pil_add_text(
-      pil_cat(
-        image, img2img(transformer, ae, prompt_tok, image, guidance = None, num_steps=50)
-      ), 
+      img2img(transformer, ae, prompt_tok, image, guidance = None, num_steps=50),
       "CFG None"
     )
     image_gen_cfg4 = pil_add_text(
-      pil_cat(
-        image, img2img(transformer, ae, prompt_tok, image, guidance = 4, prompt_neg_tok = prompt_empty_tok, num_steps=50)
-      ), 
+      img2img(transformer, ae, prompt_tok, image, guidance = 4, prompt_neg_tok = prompt_empty_tok, num_steps=50),
       "CFG 4"
     )
-    image_out = pil_cat(image_gen_cfg0, image_gen_cfg4, hor=False)
+    image_out = pil_cat(image, image_gen_cfg0)
+    image_out = pil_cat(image_out, image_gen_cfg4)
     image_out.save(images_dir / f"eval-{step}_output-{i}.jpg")
     if gallery is None:
       gallery = image_out
