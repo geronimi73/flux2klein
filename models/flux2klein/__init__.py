@@ -4,11 +4,15 @@ from torch import Tensor
 from safetensors.torch import load_file as load_sft
 from torchvision import transforms
 from typing import List
+from tqdm import tqdm
+from einops import rearrange
 
-from core.utils import catchtime
 from .flux2_src.model import Flux2, Klein4BParams
 from .flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
 from .flux2_src.sampling import prc_txt, prc_img
+
+from core.utils import catchtime
+from core.sampling import get_schedule
 
 __all__ = ["prc_txt", "prc_img"]
 
@@ -109,6 +113,74 @@ def ae_encode(ae, img, patch_size=16):
 
   return img_latent
 
+def generate_txt2img(
+  prompts: List[Tensor],
+  transformer,
+  ae,
+  height = 512, 
+  width = 512, 
+  seed = 42, 
+  num_steps = 5, 
+  guidance = None,
+  prompt_neg: Tensor = None
+):
+  torch.manual_seed(seed)
+  device = next(transformer.parameters()).device
+  dtype  = next(transformer.parameters()).dtype
+  bs = len(prompts)
+
+  noise = [
+    torch.randn([128, height//16, width//16], dtype=dtype, device=device)
+    for _ in range(bs)
+  ]
+
+  if guidance is not None:
+    noise   += noise 
+    prompts += [prompt_neg] * bs
+
+  transformer_inputs = Flux2KleinInputs(
+    images_noisy =  noise,
+    prompts =       prompts,
+  )
+
+  timesteps = get_schedule(num_steps)
+
+  for step, (t_curr, t_next) in enumerate(
+    tqdm(zip(timesteps, timesteps[1:]), desc="Denoising", total=num_steps)
+    ):
+    timesteps_vec = torch.full((transformer_inputs.num_samples,), t_curr, device=device, dtype=dtype)    
+
+    with torch.no_grad():
+      pred = transformer.forward(
+        **transformer_inputs.as_dict(),
+        timesteps = timesteps_vec,
+        guidance = None
+      )
+
+      # batch = cond + uncond
+      if guidance:
+        pred_cond, pred_uncond  = pred.chunk(2)
+        pred = pred_uncond + guidance * (pred_cond - pred_uncond)
+        pred = torch.cat([pred, pred], dim=0)
+
+    img = transformer_inputs.get_img_noisy()
+    img = img + (t_next - t_curr) * pred
+    transformer_inputs.update_img_noisy(img)
+
+  # batch = [cond1, cond2, .. uncond1, uncond2, .. ] if guidance
+  if guidance:
+    img, _ = img.chunk(2)
+
+  # batch = [cond1, cond2, .. ] 
+  # batch of images -> list of images
+  imgs = img.chunk(bs)
+
+  # unflatten tensor; flat -> 2d  
+  return [
+    ae_decode(ae, rearrange(img, "1 (h w) c -> 1 c h w", h=height//16))
+    for img in imgs
+  ]
+  
 class Flux2KleinInputs:
   def __init__(self, 
     images_noisy: List[Tensor],           # noisy latents. list of [128, h , w]
@@ -149,6 +221,7 @@ class Flux2KleinInputs:
         # Concatenate flat image patches and ids
         img.append(torch.cat(_img))   
         img_ids.append(torch.cat(_img_ids))
+
     # list([T C]) for each image -> [B T C]
     self.x =     torch.stack(img, dim=0)
     self.x_ids = torch.stack(img_ids, dim=0)
