@@ -5,11 +5,10 @@ from safetensors.torch import load_file as load_sft
 from torchvision import transforms
 from typing import List
 
+from core.utils import catchtime
 from .flux2_src.model import Flux2, Klein4BParams
 from .flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
 from .flux2_src.sampling import prc_txt, prc_img
-from core.utils import catchtime
-from core.latents import add_noise
 
 __all__ = ["prc_txt", "prc_img"]
 
@@ -20,7 +19,8 @@ def load_transformer_mock():
       Klein4BParams(
         depth=1, 
         depth_single_blocks=1,
-        # hidden_size=3048
+        hidden_size = 256,
+        num_heads = 2,
       )
     )
   print(f"Transformer loaded in {time_taken():.1f}s")
@@ -31,7 +31,7 @@ def load_transformer_flux2klein4base(mock=False):
   "Load rnd. weight tiny FLUX2"
   with catchtime() as time_taken:
     if mock:
-      transformer = Flux2(Klein4BParams(depth=1, depth_single_blocks=1))
+      transformer = load_transformer_mock()
     else: 
       with torch.device("meta"):
         transformer = Flux2(Klein4BParams())
