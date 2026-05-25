@@ -129,12 +129,7 @@ def eval_step(step, transformer, ae, prompt_tok, prompt_empty_tok, images, eval_
       img2img(transformer, ae, prompt_tok, image, guidance = None, num_steps=50),
       "CFG None"
     )
-    image_gen_cfg4 = pil_add_text(
-      img2img(transformer, ae, prompt_tok, image, guidance = 4, prompt_neg_tok = prompt_empty_tok, num_steps=50),
-      "CFG 4"
-    )
     image_out = pil_cat(image, image_gen_cfg0)
-    image_out = pil_cat(image_out, image_gen_cfg4)
     image_out.save(images_dir / f"eval-{step}_output-{i}.jpg")
     if gallery is None:
       gallery = image_out
