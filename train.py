@@ -1,4 +1,3 @@
-import os
 import torch
 import torch.nn.functional as F
 import bitsandbytes as bnb
@@ -7,7 +6,6 @@ from datasets import load_dataset
 from torchvision import transforms
 from itertools import cycle
 from einops import rearrange
-from PIL import Image
 from datetime import date
 from random_slugs import generate_slug
 from pathlib import Path
@@ -17,8 +15,6 @@ from flux2klein import (
   load_ae,
   ae_encode,
   ae_decode,
-  prc_txt, 
-  prc_img, 
   Flux2KleinInputs
 )
 from core.images import pil_cat, pil_add_text, match_width_keep_aspect
