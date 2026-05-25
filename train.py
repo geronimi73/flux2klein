@@ -24,7 +24,7 @@ from core.sampling import get_schedule
 def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
   dtype = torch.bfloat16,
-  dataset = "g-ronimo/masked_background_v8",
+  dataset = "g-ronimo/masked_background_v9",
   lr = 1e-5,
   steps = 3001,
   seed = 42,
