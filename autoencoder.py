@@ -56,7 +56,7 @@ def pil_compare_blowup(
 
 def load_ae(version):
   if version == "flux1":
-    from flux_src.modules.autoencoder import AutoEncoder, AutoEncoderParams
+    from models.flux1.flux_src.modules.autoencoder import AutoEncoder, AutoEncoderParams
 
     weight_path = huggingface_hub.hf_hub_download(
       repo_id="black-forest-labs/FLUX.1-dev",
@@ -76,7 +76,7 @@ def load_ae(version):
     )
 
   else:
-    from flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
+    from models.flux2klein.flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
 
     weight_path = huggingface_hub.hf_hub_download(
       repo_id="black-forest-labs/FLUX.2-dev",

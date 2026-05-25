@@ -10,7 +10,7 @@ from datetime import date
 from random_slugs import generate_slug
 from pathlib import Path
 
-from flux2klein import (
+from models.flux2klein import (
   load_transformer_flux2klein4base,
   load_ae,
   ae_encode,

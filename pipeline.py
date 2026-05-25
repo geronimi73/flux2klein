@@ -11,9 +11,9 @@ from tqdm import tqdm
 from PIL import Image
 
 # BFL model defs
-from flux2klein.flux2_src.text_encoder import Qwen3Embedder
-from flux2klein.flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
-from flux2klein.flux2_src.model import Flux2, Klein4BParams
+from models.flux2klein.flux2_src.text_encoder import Qwen3Embedder
+from models.flux2klein.flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
+from models.flux2klein.flux2_src.model import Flux2, Klein4BParams
 
 device = "cuda"
 dtype = torch.bfloat16
