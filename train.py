@@ -40,7 +40,7 @@ def train(
 
   run_name = f"{date.today().isoformat()}-{generate_slug(num_of_words=2)}"
   run_dir = Path(f"run/{run_name}")
-  run_dir.mkdir()
+  run_dir.mkdir(parents=True)
   eval_dir = f"{run_dir}/eval"
   print(f"Run: {run_name}")
 
