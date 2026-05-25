@@ -1,7 +1,9 @@
 import torch
 import huggingface_hub
+from torch import Tensor
 from safetensors.torch import load_file as load_sft
 from torchvision import transforms
+from typing import List
 
 from .flux2_src.model import Flux2, Klein4BParams
 from .flux2_src.autoencoder import AutoEncoder, AutoEncoderParams
@@ -109,64 +111,62 @@ def ae_encode(ae, img, patch_size=16):
 
 class Flux2KleinInputs:
   def __init__(self, 
-    noise,      # [H W C]
-    prompt,             
-    prompt_neg = None,  #  for CFG: prepare BS 2, otherwise BS 1
-    timestep = None, 
-    images = None,   # list of [H W C]
-    img_clean = None # for training. if None -> inference
+    images_noisy: List[Tensor],           # noisy latents. list of [128, h , w]
+    prompts: List[Tensor],                # encoded prompt, [512, 7680]
+    images_clean: List[Tensor] = [],      # clean latents, each [128, h , w]
+    ref_images: List[List[Tensor]] = None, # might be mult. ref. images per input -> list of lists of Tensors
+    noise: List[Tensor] = None
   ):
-    # prepare everything for a single batch
-    assert len(noise.shape) == 3
-
-    if img_clean is not None:
-      # training
-      assert len(img_clean.shape) == 3
-      assert timestep is not None
-      img_noisy = add_noise(img_clean, noise, timestep)
+    # i've fucked this up too many times
+    if ref_images is None:
+        ref_images = [[] for _ in range(len(images_noisy))]
     else:
-      # inference
-      assert timestep is None
-      img_noisy = noise
+        assert len(images_noisy) == len(ref_images), f"{len(images_noisy)}, {len(ref_images)}"    
+        assert isinstance(ref_images[0], List)
+        assert isinstance(ref_images[0][0], torch.Tensor)
+    assert len(images_noisy) > 0 and len(images_noisy) == len(prompts)
+    assert isinstance(images_noisy[0], torch.Tensor)
+    assert len(images_noisy[0].shape) == 3
+    assert all([isinstance(x, List) or x is None for x in [images_noisy, prompts, images_clean, ref_images, noise]])
+    if images_clean:
+      for _noise, _target in zip(images_noisy, images_clean):
+        assert _noise.shape == _target.shape, f"noise {_noise.shape} != target {_target.shape}"
 
-    # FIRST: Build x and x_ids; img=noisy latent, img_refs=reference images
-    img, img_ids = prc_img(img_noisy)
-
-    img = img[None, ]
-    img_ids = img_ids[None, ]
-
-    if images:
-      img_refs, img_refs_ids = zip(*[
-        prc_img(img_ref.squeeze(), t_coord=torch.tensor([(idx+1)*10], dtype=torch.int64))
-        for idx, img_ref in enumerate(images)
-      ])
-      img_refs = torch.cat(img_refs, dim=0)[None, ]
-      img_refs_ids = torch.cat(img_refs_ids, dim=0)[None, ]
-
-    self.x =     torch.cat([img, img_refs], dim=1) if images else img
-    self.x_ids = torch.cat([img_ids, img_refs_ids], dim=1) if images else img_ids
+    # store number of tokens for noisy image
+    # assume! this is the same for all images in batch
+    self.input_img_tokens = images_noisy[0].shape[1] * images_noisy[0].shape[2] 
+    self.num_samples = len(images_noisy)
+      
+    # First build x and x_ids; concatenate image and image references
+    img, img_ids = [], []
+    for _noise, _refs in zip(images_noisy, ref_images):
+        # for each input image: process noise + ref. images
+        _img, _img_ids = zip(*[    
+            prc_img(img, t_coord=torch.tensor([idx*10], dtype=torch.int64))   # prc_img: [C H W] -> [T C]
+            # _noise is a single Tensor [C H W], _refs is a list of Tensors
+            for idx, img in enumerate([_noise] + _refs)
+        ])
+        # Concatenate flat image patches and ids
+        img.append(torch.cat(_img))   
+        img_ids.append(torch.cat(_img_ids))
+    # list([T C]) for each image -> [B T C]
+    self.x =     torch.stack(img, dim=0)
+    self.x_ids = torch.stack(img_ids, dim=0)
 
     # SECOND: Build ctx = text
-    self.ctx, self.ctx_ids = prc_txt(prompt)
-    self.ctx, self.ctx_ids = self.ctx[None,], self.ctx_ids[None,]
+    prompt, prompt_ids = zip(*[
+        prc_txt(prompt.squeeze())
+        for idx, prompt in enumerate(prompts)
+    ])
+    self.ctx =     torch.stack(prompt, dim=0)
+    self.ctx_ids = torch.stack(prompt_ids, dim=0)
 
-    # CFG: Add second batch dim.
-    self.is_cfg = prompt_neg is not None
-    if self.is_cfg:
-      ctx_neg, ctx_neg_ids = prc_txt(prompt_neg)
-      ctx_neg, ctx_neg_ids = ctx_neg[None,], ctx_neg_ids[None,]
-      self.ctx =      torch.cat([self.ctx, ctx_neg])
-      self.ctx_ids =  torch.cat([self.ctx_ids, ctx_neg_ids])
-      self.x =        torch.cat([self.x] * 2)
-      self.x_ids =    torch.cat([self.x_ids] * 2)
-
-    # flat, with B dim.
-    self.img_noisy = img
-    self.img_clean = prc_img(img_clean)[0][None, ] if img_clean is not None else None
-    self.noise = prc_img(noise)[0][None, ]
+    # For training
+    self.noise =  torch.stack([prc_img(img.squeeze())[0] for img in noise]) if noise else None
+    self.target = torch.stack([prc_img(img.squeeze())[0] for img in images_clean]) if images_clean else None
 
   def get_target(self):
-    return self.img_clean
+    return self.target
 
   def get_noise(self):
     return self.noise
@@ -180,12 +180,7 @@ class Flux2KleinInputs:
     )
 
   def get_img_noisy(self):
-    return self.img_noisy
-
+    return self.x[:, :self.input_img_tokens, :] 
+      
   def update_img_noisy(self, img_noisy):      
-    self.img_noisy = img_noisy  # [B T C]
-    # Update flat img in `x`, add it twice if CFG
-    self.x[:, :img_noisy.shape[1], :] = (
-      torch.cat([img_noisy] * 2) if self.is_cfg else 
-      img_noisy
-    )
+    self.x[:, :self.input_img_tokens, :] = img_noisy

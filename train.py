@@ -18,6 +18,8 @@ from models.flux2klein import (
   Flux2KleinInputs
 )
 from core.images import pil_cat, pil_add_text, match_width_keep_aspect
+from core.latents import add_noise
+from core.sampling import get_schedule
 
 def train(
   device = "cuda" if torch.cuda.is_available() else "mps",
@@ -66,24 +68,25 @@ def train(
     transformer.train()
 
     # Sample input (=with masked area) and target image
-    img_in, img_target = preprocess_sample(ds["train"][next(data_sampler)])
+    img_input, img_target = preprocess_sample(ds["train"][next(data_sampler)])
     if step == 0:
-      log_first_sample(img_in, img_target, run_dir)
-    img_in = ae_encode(ae, img_in).squeeze()
+      log_first_sample(img_input, img_target, run_dir)
+    img_input = ae_encode(ae, img_input).squeeze()
     img_target = ae_encode(ae, img_target).squeeze()
-
-    # Gaussian noise
-    noise = torch.randn_like(img_in, dtype=dtype, device=device)
 
     # Choose noise level
     timestep = get_rnd_timestep(1, dist="uniform").to(device).to(dtype)
 
+    # Gaussian noise
+    noise = torch.randn_like(img_target, dtype=dtype, device=device)
+    img_target_noisy = add_noise(img_target, noise, timestep)
+
     transformer_inputs = Flux2KleinInputs(
-      noise = noise,
-      prompt = prompt_tok,
-      timestep = timestep,
-      images = [ img_in ],
-      img_clean = img_target
+      images_noisy =  [ img_target_noisy ],
+      ref_images =    [ [img_input] ],
+      images_clean =  [ img_target ],
+      prompts =       [ prompt_tok ],
+      noise =         [ noise ],
     )
 
     pred = transformer.forward(
@@ -91,7 +94,7 @@ def train(
       timesteps = timestep,
       guidance = None
     )
-    pred, _ = pred.split(pred.shape[1] // 2, dim=1) 
+    pred = pred[:, :transformer_inputs.input_img_tokens, :]  # strip ref. image tokens
 
     loss = F.mse_loss(pred, transformer_inputs.get_noise() - transformer_inputs.get_target())
     loss.backward()
@@ -162,10 +165,9 @@ def img2img(
   img_ref = ae_encode(ae, img_ref).squeeze()
 
   transformer_inputs = Flux2KleinInputs(
-    noise = noise,
-    prompt = prompt_tok,
-    prompt_neg = prompt_neg_tok,
-    images = [ img_ref ],
+    images_noisy =  [ noise ],
+    ref_images =    [ [img_ref] ],
+    prompts =       [ prompt_tok ],
   )
 
   timesteps = get_schedule(num_steps)
@@ -181,14 +183,13 @@ def img2img(
         timesteps = timesteps_vec,
         guidance = None
       )
-      # model returns [img + img_refs] -> strip img_refs
-      img = transformer_inputs.get_img_noisy()
-      pred = pred[:, :img.shape[1]]
+      pred = pred[:, :transformer_inputs.input_img_tokens, :]  # strip ref. image tokens
 
       if guidance:
         pred_cond, pred_uncond = pred.chunk(2)
         pred = pred_uncond + guidance * (pred_cond - pred_uncond)
 
+    img = transformer_inputs.get_img_noisy()
     img = img + (t_next - t_curr) * pred
     transformer_inputs.update_img_noisy(img)
 
@@ -230,10 +231,6 @@ def get_rnd_timestep(num_samples, dist="normal"):
   else:
       raise Exception(f"unknown distribution {dist}")
   return sigmas
-
-def get_schedule(num_steps, rho=5):
-  "Karras et al schedule for sigma_max = 1 and sigma_min = 0"
-  return torch.linspace(1, 0, num_steps + 1) ** (1/rho)
 
 if __name__ == "__main__":
   import argparse
